@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"boot.moustafa.tutorial/internal/headers"
 )
 
 type Status int
 
 const (
-	initialized Status = 0
-	done        Status = 1
+	initialized    Status = 0
+	done           Status = 1
+	ParsingHeaders Status = 2
 )
 
 type RequestLine struct {
@@ -20,89 +23,20 @@ type RequestLine struct {
 }
 type Request struct {
 	RequestLine  RequestLine
+	HeaderLine   headers.Headers
 	ParserStatus Status
 }
 
 var SEPARATOR = "\r\n"
 var BUFFERSIZE = 8
 
-// func RequestFromReader(reader io.Reader) (*Request, error) {
-
-// 	//data := make([]byte, 8)
-// 	request, err := io.ReadAll(reader)
-// 	if err != nil {
-// 		//log.Fatal("error", "error", err)
-// 		return nil, err
-// 	}
-// 	requestLineStruct, err := parseRequestLine(string(request))
-// 	if err != nil {
-// 		//log.Fatal("error", "error", err)
-// 		return nil, err
-// 	}
-
-// 	return &Request{requestLineStruct}, nil
-// }
-
-// func parseRequestLine(request string) (RequestLine, error) {
-// 	ParsedRequestLine := RequestLine{}
-// 	for i := range 3 {
-// 		if i == 2 {
-// 			ParsedRequestLine.HttpVersion = strings.Split(strings.Split(strings.Split(request, " ")[i], "\r\n")[0], "/")[1]
-// 			if !strings.HasSuffix(ParsedRequestLine.HttpVersion, "1.1") {
-// 				fmt.Printf("Unsupported HTTP version: %s\n", ParsedRequestLine.HttpVersion)
-// 				return RequestLine{}, fmt.Errorf("unsupported HTTP version: %s", ParsedRequestLine.HttpVersion)
-// 			}
-// 			fmt.Printf("Parsed Http Verion: %s\n", ParsedRequestLine.HttpVersion)
-// 		}
-// 		if i == 1 {
-// 			ParsedRequestLine.RequestTarget = strings.Split(request, " ")[i]
-// 			fmt.Printf("Parsed Request Target: %s\n", ParsedRequestLine.RequestTarget)
-// 		}
-// 		if i == 0 {
-// 			ParsedRequestLine.Method = strings.Split(request, " ")[i]
-// 			if strings.ToUpper(ParsedRequestLine.Method) != ParsedRequestLine.Method {
-// 				fmt.Printf("Invalid method: %s\n", ParsedRequestLine.Method)
-// 				return RequestLine{}, fmt.Errorf("invalid method: %s", ParsedRequestLine.Method)
-// 			}
-// 			fmt.Printf("Parsed request Method: %s\n", ParsedRequestLine.Method)
-// 		}
-// 	}
-// 	return ParsedRequestLine, nil
-// }
-
-// // refined version of parseRequestLine, which is more efficient and easier to read
-// func parseRequestLine(request string) (RequestLine, error) {
-// 	ParsedRequestLine := RequestLine{}
-// 	idx := strings.Index(request, SEPARATOR)
-
-// 	if idx == -1 {
-// 		return RequestLine{}, fmt.Errorf("invalid request: no CRLF found")
-// 	}
-
-// 	fullrequestLine := request[:idx]
-// 	if len(strings.Split(fullrequestLine, " ")) != 3 {
-// 		return RequestLine{}, fmt.Errorf("invalid request line: expected 3 parts, got %d", len(strings.Split(fullrequestLine, " ")))
-// 	}
-// 	ParsedRequestLine.Method = strings.Split(fullrequestLine, " ")[0]
-// 	ParsedRequestLine.RequestTarget = strings.Split(fullrequestLine, " ")[1]
-// 	ParsedRequestLine.HttpVersion = strings.Split(strings.Split(fullrequestLine, " ")[2], "/")[1]
-
-// 	if strings.ToUpper(ParsedRequestLine.Method) != ParsedRequestLine.Method {
-// 		return RequestLine{}, fmt.Errorf("malformed method: %s", ParsedRequestLine.Method)
-// 	}
-// 	if ParsedRequestLine.HttpVersion != "1.1" {
-// 		return RequestLine{}, fmt.Errorf("unsupported HTTP version: %s", ParsedRequestLine.HttpVersion)
-// 	}
-
-// 	return ParsedRequestLine, nil
-// }
-
 // Chapter4 L3
 // creates a new request with default values, which can be used to incrementally parse a request from a stream of data
 // returns a pointer to the new request, which can be modified by the caller
 func newRequest() *Request {
 	v := Request{} //creates a new request with default values
-	return &v      //returns a pointer to the new request, which can be modified by the caller
+	v.HeaderLine = headers.NewHeaders()
+	return &v //returns a pointer to the new request, which can be modified by the caller
 	// or return &Request{}
 }
 
@@ -144,21 +78,47 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
-	if r.ParserStatus == done {
-		return 0, fmt.Errorf("error: trying to read from invalid parser state: %d", r.ParserStatus)
-	}
-	Parsedline, numBytes, err := parseRequestLine(data)
-	if err == nil && numBytes == 0 {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	fmt.Printf("Parsed Request Line: %+v\n", Parsedline)
-	r.RequestLine = Parsedline
-	r.ParserStatus = done
-	return numBytes, nil
+	totalBytesParsed := 0
+outer:
+	for {
+		currentData := data[totalBytesParsed:]
+		switch r.ParserStatus {
+		case done:
+			return 0, fmt.Errorf("error: trying to read from invalid parser state: %d", r.ParserStatus)
 
+		case initialized:
+			Parsedline, numBytes, err := parseRequestLine(data)
+			totalBytesParsed = totalBytesParsed + numBytes
+			if err == nil && numBytes == 0 {
+				return 0, nil
+			}
+			if err != nil {
+				return 0, err
+			}
+			fmt.Printf("Parsed Request Line: %+v\n", Parsedline)
+			r.RequestLine = Parsedline
+			r.ParserStatus = ParsingHeaders
+
+		case ParsingHeaders:
+			numBytesHeaders, doneParsing, err := r.HeaderLine.Parse(currentData)
+			totalBytesParsed = totalBytesParsed + numBytesHeaders
+
+			if err != nil {
+				fmt.Printf("Error parsing headers: %v\n", err)
+				return 0, err
+			}
+			if doneParsing {
+				r.ParserStatus = done
+			}
+			// if numBytesHeaders == 0 {
+			// 	break outer
+			// }
+			// Always break after Headers.Parse() to let main loop manage buffer
+			break outer
+		}
+
+	}
+	return totalBytesParsed, nil
 }
 
 func parseRequestLine(request []byte) (RequestLine, int, error) {
