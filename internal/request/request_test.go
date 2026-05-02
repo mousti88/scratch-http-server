@@ -135,11 +135,11 @@ func TestRequestHeaderLineParse(t *testing.T) {
 	require.NotNil(t, r)
 	assert.Equal(t, "localhost:42069, example.com", r.HeaderLine.Get("host"))
 
-	// Test: Missing end of Headers
-	// reader = &chunkReader{
-	// 	data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n",
-	// 	numBytesPerRead: 3,
-	// }
-	// r, err = RequestFromReader(reader)
-	// require.Error(t, err)
+	//Test: Missing end of Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.Error(t, err)
 }

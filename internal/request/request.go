@@ -70,6 +70,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if parserr != nil {
 			return nil, fmt.Errorf("error parsing request: %w", parserr)
 		}
+		if readerr == io.EOF {
+			fmt.Printf("Reached EOF while reading from reader. Current buffer: %s\n", string(buf[:readToIndex]))
+			break
+		}
 	}
 	if r.ParserStatus != done {
 		return nil, fmt.Errorf("incomplete request: EOF before CRLF")
@@ -110,9 +114,6 @@ outer:
 			if doneParsing {
 				r.ParserStatus = done
 			}
-			// if numBytesHeaders == 0 {
-			// 	break outer
-			// }
 			// Always break after Headers.Parse() to let main loop manage buffer
 			break outer
 		}
