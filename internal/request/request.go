@@ -3,6 +3,7 @@ package request
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"boot.moustafa.tutorial/internal/headers"
@@ -14,6 +15,7 @@ const (
 	initialized    Status = 0
 	done           Status = 1
 	ParsingHeaders Status = 2
+	ParsingBody    Status = 3
 )
 
 type RequestLine struct {
@@ -23,7 +25,8 @@ type RequestLine struct {
 }
 type Request struct {
 	RequestLine  RequestLine
-	HeaderLine   headers.Headers
+	HeaderLines  headers.Headers
+	Body         []byte
 	ParserStatus Status
 }
 
@@ -35,9 +38,21 @@ var BUFFERSIZE = 8
 // returns a pointer to the new request, which can be modified by the caller
 func newRequest() *Request {
 	v := Request{} //creates a new request with default values
-	v.HeaderLine = headers.NewHeaders()
+	v.HeaderLines = headers.NewHeaders()
 	return &v //returns a pointer to the new request, which can be modified by the caller
 	// or return &Request{}
+}
+
+func GetIntKey(h *headers.Headers, key string) (int, error) {
+	value := h.Get(key)
+	if value == "" {
+		return 0, nil // no header with that key
+	}
+	intValue, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("error converting header value to integer: %w", err)
+	}
+	return intValue, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
@@ -83,6 +98,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 func (r *Request) parse(data []byte) (int, error) {
 	totalBytesParsed := 0
+	//The for loop inside parse() handles one type of parsing (request line, headers, or body) for what's currently in the buffer. The outer main loop handles reading more data when you need it.
 outer:
 	for {
 		currentData := data[totalBytesParsed:]
@@ -104,7 +120,7 @@ outer:
 			r.ParserStatus = ParsingHeaders
 
 		case ParsingHeaders:
-			numBytesHeaders, doneParsing, err := r.HeaderLine.Parse(currentData)
+			numBytesHeaders, doneParsing, err := r.HeaderLines.Parse(currentData)
 			totalBytesParsed = totalBytesParsed + numBytesHeaders
 
 			if err != nil {
@@ -112,10 +128,38 @@ outer:
 				return 0, err
 			}
 			if doneParsing {
-				r.ParserStatus = done
+				totalBytesParsed = totalBytesParsed + len(headers.LINE_SEPARATOR) // account for the \r\n that separates headers from body
+				r.ParserStatus = ParsingBody
 			}
 			// Always break after Headers.Parse() to let main loop manage buffer
 			break outer
+
+		case ParsingBody:
+			ContentLength, err := GetIntKey(&r.HeaderLines, "Content-Length")
+			if err != nil {
+				return 0, fmt.Errorf("error getting Content-Length header: %w", err)
+			}
+			if ContentLength == 0 { //  for our implementation we're going to assume that if there is no Content-Length header, there is no body present. This is a safe assumption for our purposes, though it might not be true in all cases in the wild.
+				fmt.Printf("No Content-Length header found in request, assuming no body is present. Current buffer: %s\n", string(currentData))
+				r.ParserStatus = done
+			}
+			numBytesParsed, err := parseBody(r, currentData)
+			totalBytesParsed = totalBytesParsed + numBytesParsed
+			fmt.Printf("Current body content: %s\n", string(r.Body))
+			if err != nil {
+				return 0, fmt.Errorf("Error while parsing body")
+			}
+			if len(r.Body) > ContentLength {
+				fmt.Printf("Body length exceeds Content-Length header. Body length: %d, Content-Length: %d\n", len(r.Body), ContentLength)
+				return 0, fmt.Errorf("error: Body greater than specified content-length")
+			}
+			if len(r.Body) == ContentLength {
+				r.ParserStatus = done
+				fmt.Printf("I have consumed all the data you have given me!\n")
+			}
+			// Always break after parsing body to let main loop manage buffer and EOF
+			break outer
+
 		}
 
 	}
@@ -153,4 +197,10 @@ func parseRequestLine(request []byte) (RequestLine, int, error) {
 	}
 
 	return ParsedRequestLine, numBytes, nil
+}
+
+func parseBody(request *Request, body []byte) (int, error) {
+	fmt.Printf("Parsing body. Current buffer: %s\n", string(body))
+	request.Body = append(request.Body, body...)
+	return len(body), nil
 }

@@ -67,7 +67,7 @@ func main() {
 		fmt.Printf("- Target: %s\n", string(requestParsed.RequestLine.RequestTarget))
 		fmt.Printf("- Version: %s\n", string(requestParsed.RequestLine.HttpVersion))
 		fmt.Printf("- Headers:\n")
-		for key, value := range requestParsed.HeaderLine {
+		for key, value := range requestParsed.HeaderLines {
 			fmt.Printf("  - %s: %s\n", key, value)
 		}
 		if err != nil {

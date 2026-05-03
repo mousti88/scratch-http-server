@@ -28,7 +28,12 @@ func setHeader(h Headers, key, value string) {
 	}
 }
 func (h Headers) Get(key string) string {
-	return h[strings.ToLower(key)]
+	// return key if it exists, otherwise return error
+	value, exists := h[strings.ToLower(key)]
+	if !exists {
+		return ""
+	}
+	return value
 }
 func CheckInvalidChar(key string) bool {
 	return regexp.MustCompile(`^[A-Za-z0-9!#$%&'*+\-.^_{|}` + "`" + `~]+$`).MatchString(key)
